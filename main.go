@@ -1,19 +1,19 @@
 package main
 
 import (
-	"fmt"
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
-	"log"
-	"net/http"
-	"time"
-	"io"
+	"bufio"
 	"github.com/gorilla/websocket"
+	"github.com/hashicorp/yamux"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"strings"
 )
 
 var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
+	ReadBufferSize:  2048,
+	WriteBufferSize: 2048,
 }
 
 func ok(w http.ResponseWriter) {
@@ -26,156 +26,128 @@ func ok(w http.ResponseWriter) {
 			</html>`))
 }
 
-func main() {
-	http.HandleFunc("/proxy", func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Content-Type") != "application/octet-stream" {
-			fmt.Println("Wrong content type type shi")
-			ok(w)
-			return
-		}
+func handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	// 1. UPGRADE HTTP CONNECTION TO GORILLA WEBSOCKET 🦍
+	wsConn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("UPGRADE FAIL: %v", err)
+		return
+	}
+	defer wsConn.Close()
 
-		bytes, err := io.ReadAll(r.Body)
+	// 2. EXTRACT RAW NETWORK CONNECTION VIA UNDERLYING NATIVE SOCKET 🛠️
+	netConn := wsConn.UnderlyingConn()
+
+	// 3. SLAP YAMUX SERVER ON TOP TO UNWRAP STREAMS 🌪️🌪️
+	session, err := yamux.Server(netConn, nil)
+	if err != nil {
+		log.Printf("YAMUX SERVER FAIL: %v", err)
+		return
+	}
+	defer session.Close()
+
+	log.Println("MASTER TUNNEL OPEN!!! WAITING FOR MONKEY STREAMS... 🦍⚡")
+
+	// 4. LOOP FOREVER ACCEPTING VIRTUAL STREAMS INSIDE WEBSOCKET
+	for {
+		stream, err := session.Accept()
 		if err != nil {
-			fmt.Printf("Error reading body type shi: %s", err.Error())
-			return
+			log.Printf("SESSION CLOSED: %v", err)
+			break
 		}
-		defer r.Body.Close()
 
-		/*packet :=*/
-		gopacket.NewPacket(bytes, layers.LayerTypeIPv4, gopacket.Default)
+		// PROCESS EACH STREAM CONCURRENTLY FAST!!! 🔥
+		go handleVirtualStream(stream)
+	}
+}
 
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`<!DOCTYPE html>
-				<html>
-				<head><title>dumb-proxy-go</title></head>
-				<body>/proxy</body>
-				</html>`))
-		//route(packet)
-		// ip.dst : tcp.dstPort
-	})
+func handleVirtualStream(stream net.Conn) {
+	defer stream.Close()
 
-	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		// 2. Automatically handle the handshake protocol upgrade
+	// 1. READ TARGET ADDRESS STRING FROM CLIENT UNTIL NEWLINE 🍌
+	reader := bufio.NewReader(stream)
+	targetAddr, err := reader.ReadString('\n')
+	if err != nil {
+		log.Printf("BAD READ: %v", err)
+		return
+	}
+	targetAddr = strings.TrimSpace(targetAddr)
+
+	log.Printf("DIALING INTERNET TARGET: %s 🚀", targetAddr)
+
+	// 2. DIAL OUT TO REAL WEBSITE ON THE INTERNET
+	targetConn, err := net.Dial("tcp", targetAddr)
+	if err != nil {
+		log.Printf("DIAL TARGET FAIL %s: %v", targetAddr, err)
+		return
+	}
+	defer targetConn.Close()
+
+	// 3. BI-DIRECTIONAL RAW BYTES COPY PIPE!!! ZERO DECODING!!! 🌪️🚀
+	errChan := make(chan error, 2)
+
+	go func() {
+		_, err := io.Copy(targetConn, reader) // CLIENT TO INTERNET
+		errChan <- err
+	}()
+
+	go func() {
+		_, err := io.Copy(stream, targetConn) // INTERNET TO CLIENT
+		errChan <- err
+	}()
+
+	// WAIT UNTIL ONE SIDE HANGS UP OR RESETS
+	<-errChan
+	log.Printf("TARGET CONNECTION %s CLOSED CLEANLY!!! 🎉", targetAddr)
+}
+
+func main() {
+	http.HandleFunc("/ws", handleWebSocket)
+	/*http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			log.Printf("Upgrade failed: %v", err)
 			return
 		}
 		defer conn.Close()
-		log.Println("WebSocket link established via Gorilla!")
 
-		// 3. Server-to-Client Stream Loop (Outbound)
+		log.Println("WebSocket link established")
+
+
+		// Server-to-Client (Outbound)
 		go func() {
-			count := 0
 			for {
-				count++
 				payload := fmt.Sprintf("Gorilla Server Tick #%d | Time: %s", count, time.Now().Format("15:04:05"))
-				
-				// Simple native helper to send string messages safely
-				err := conn.WriteMessage(websocket.TextMessage, []byte(payload))
+
+				err := conn.WriteMessage(websocket.BinaryMessage, []byte(payload))
 				if err != nil {
-					return // Triggers if client disconnects
+					return
 				}
-				time.Sleep(2 * time.Second)
 			}
 		}()
 
-		// 4. Client-to-Server Stream Loop (Inbound)
+		// Client-to-Server (Inbound)
 		for {
-			// Automatically handles unmasking and structural frame management
-			messageType, message, err := conn.ReadMessage()
+			messageType, msg, err := conn.ReadMessage()
 			if err != nil {
 				log.Println("Client dropped connection.")
 				break
 			}
 
-			log.Printf("Received from Client: %s\n", string(message))
-
-			// Echo receipt confirmation straight back over the socket
-			ack := fmt.Sprintf("Server Acknowledged: '%s'", string(message))
-			if err := conn.WriteMessage(messageType, []byte(ack)); err != nil {
-				break
+			if messageType != websocket.BinaryMessage {
+				log.Println("Unexpected read: message type %d, msg %s", messageType, msg)
+				continue
 			}
+
 		}
-	})
-
-	http.HandleFunc("/test", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-
-		html := `
-		<!DOCTYPE html>
-		<html lang="en">
-		<head>
-			<meta charset="UTF-8">
-			<title>WebSocket Stream Test</title>
-			<style>
-				body { font-family: sans-serif; margin: 40px; background: #f4f4f9; color: #333; }
-				#log { background: #1e1e1e; color: #76c176; padding: 20px; border-radius: 6px; font-family: monospace; white-space: pre-wrap; height: 350px; overflow-y: auto; margin-bottom: 20px;}
-				h1 { color: #2c3e50; }
-				button { padding: 10px 20px; background: #3498db; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
-				button:hover { background: #2980b9; }
-			</style>
-		</head>
-		<body>
-			<h1>Bi-Directional WebSocket Stream Inspector</h1>
-			<p>Watch incoming server ticks below, or click the button to stream client chunks back up:</p>
-			
-			<div id="log">Initializing WebSocket upgrade request...&#10;</div>
-			<button id="sendBtn" disabled>Stream Chunk to Server</button>
-
-			<script>
-				let ws;
-				let clientCount = 0;
-
-				function initWebSocket() {
-					const logDiv = document.getElementById('log');
-					const sendBtn = document.getElementById('sendBtn');
-
-					// 1. Open connection using the ws:// protocol (bypasses load balancer HTTP logic)
-					ws = new WebSocket('ws://' + window.location.host + '/ws');
-
-					ws.onopen = () => {
-						logDiv.textContent += "WebSocket connection opened! Buffering disabled.\n\n";
-						sendBtn.disabled = false; // Allow client communication
-					};
-
-					// 2. Event listener for server data streams
-					ws.onmessage = (event) => {
-						logDiv.textContent += "[Inbound] " + event.data + "\n";
-						logDiv.scrollTop = logDiv.scrollHeight;
-					};
-
-					ws.onclose = () => {
-						logDiv.textContent += "\n[WebSocket link severed]";
-						sendBtn.disabled = true;
-					};
-				}
-
-				// 3. User interaction pushes a real-time event block up to the server stream
-				document.getElementById('sendBtn').onclick = () => {
-					clientCount++;
-					const payload = "Client Frame Element #" + clientCount;
-					
-					ws.send(payload); // Dispatched instantly through the open pipe
-					
-					const logDiv = document.getElementById('log');
-					logDiv.textContent += "[Outbound] Sent: " + payload + "\n";
-					logDiv.scrollTop = logDiv.scrollHeight;
-				};
-
-				initWebSocket();
-			</script>
-		</body>
-		</html>
-		`
-		w.Write([]byte(html))
-	})
+	})*/
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		ok(w)
 	})
 
-	fmt.Println("Server running on :8080...")
-	http.ListenAndServe(":8080", nil)
+	log.Println("SERVER RUNNING ON :8080... 🔥🔥🔥")
+	if err := http.ListenAndServe(":8080", nil); err != nil {
+		log.Fatalf("PORT 8080 EXPLODED: %v", err)
+	}
 }
