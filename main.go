@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"time"
 )
 
 var upgrader = websocket.Upgrader{
