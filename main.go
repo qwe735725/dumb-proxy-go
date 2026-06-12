@@ -16,6 +16,51 @@ var upgrader = websocket.Upgrader{
 	WriteBufferSize: 2048,
 }
 
+// GORILLA TO NET.CONN CONVERTER STRUCT 🦍🛠️
+type GorillaConn struct {
+	ws     *websocket.Conn
+	reader io.Reader
+}
+
+func NewGorillaConn(ws *websocket.Conn) *GorillaConn {
+	return &GorillaConn{ws: ws}
+}
+
+func (c *GorillaConn) Read(b []byte) (int, error) {
+	for {
+		if c.reader == nil {
+			msgType, r, err := c.ws.NextReader()
+			if err != nil {
+				return 0, err
+			}
+			if msgType == websocket.BinaryMessage {
+				c.reader = r
+			}
+		}
+		n, err := c.reader.Read(b)
+		if err == io.EOF {
+			c.reader = nil
+			continue
+		}
+		return n, err
+	}
+}
+
+func (c *GorillaConn) Write(b []byte) (int, error) {
+	err := c.ws.WriteMessage(websocket.BinaryMessage, b)
+	if err != nil {
+		return 0, err
+	}
+	return len(b), nil
+}
+
+func (c *GorillaConn) Close() error                       { return c.ws.Close() }
+func (c *GorillaConn) LocalAddr() net.Addr                { return c.ws.LocalAddr() }
+func (c *GorillaConn) RemoteAddr() net.Addr               { return c.ws.RemoteAddr() }
+func (c *GorillaConn) SetDeadline(t time.Time) error      { return nil }
+func (c *GorillaConn) SetReadDeadline(t time.Time) error  { return nil }
+func (c *GorillaConn) SetWriteDeadline(t time.Time) error { return nil }
+
 func ok(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
@@ -36,7 +81,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	defer wsConn.Close()
 
 	// 2. EXTRACT RAW NETWORK CONNECTION VIA UNDERLYING NATIVE SOCKET 🛠️
-	netConn := wsConn.UnderlyingConn()
+	netConn := NewGorillaConn(wsConn)
 
 	// 3. SLAP YAMUX SERVER ON TOP TO UNWRAP STREAMS 🌪️🌪️
 	session, err := yamux.Server(netConn, nil)
@@ -103,44 +148,6 @@ func handleVirtualStream(stream net.Conn) {
 
 func main() {
 	http.HandleFunc("/ws", handleWebSocket)
-	/*http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			log.Printf("Upgrade failed: %v", err)
-			return
-		}
-		defer conn.Close()
-
-		log.Println("WebSocket link established")
-
-
-		// Server-to-Client (Outbound)
-		go func() {
-			for {
-				payload := fmt.Sprintf("Gorilla Server Tick #%d | Time: %s", count, time.Now().Format("15:04:05"))
-
-				err := conn.WriteMessage(websocket.BinaryMessage, []byte(payload))
-				if err != nil {
-					return
-				}
-			}
-		}()
-
-		// Client-to-Server (Inbound)
-		for {
-			messageType, msg, err := conn.ReadMessage()
-			if err != nil {
-				log.Println("Client dropped connection.")
-				break
-			}
-
-			if messageType != websocket.BinaryMessage {
-				log.Println("Unexpected read: message type %d, msg %s", messageType, msg)
-				continue
-			}
-
-		}
-	})*/
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		ok(w)
