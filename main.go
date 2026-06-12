@@ -50,8 +50,10 @@ func main() {
 	})
 
 	http.HandleFunc("/stream", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
 
 		flusher, ok := w.(http.Flusher)
 		if !ok {
@@ -72,17 +74,16 @@ func main() {
 			default:
 				count++
 				// Format and write the data payload
-				payload := fmt.Sprintf("HTTP/2 Data Frame Chunk #%d | Timestamp: %s\n", count, time.Now().Format("15:04:05"))
+				payload := fmt.Sprintf("data: SSE Event Packet #%d | Time: %s\n\n", count, time.Now().Format("15:04:05"))
+
 				_, err := w.Write([]byte(payload))
 				if err != nil {
 					log.Printf("Write error: %v\n", err)
 					return
 				}
 
-				// Force the HTTP/2 engine to transmit the DATA frame immediately over the wire
 				flusher.Flush()
 
-				// Sleep to simulate pacing real-time background events
 				time.Sleep(1 * time.Second)
 			}
 		}
@@ -109,42 +110,35 @@ func main() {
 			<div id="log">Connecting to stream...&#10;</div>
 
 			<script>
-				async function listenToHttp2Stream() {
+				function listenToSseStream() {
 					const logDiv = document.getElementById('log');
 					
-					try {
-						// Fetch handles HTTP/2 connection pooling automatically
-						const response = await fetch('/stream');
-						const reader = response.body.getReader();
-						const decoder = new TextDecoder();
+					// 1. Native EventSource is designed explicitly to consume text/event-stream
+					const eventSource = new EventSource('/stream');
 
-						logDiv.textContent += "Connected successfully! Reading binary frames... \n\n";
+					eventSource.onopen = () => {
+						logDiv.textContent += "SSE Connection established! Streaming data... \n\n";
+					};
 
-						while (true) {
-							// reader.read() resolves exactly when an HTTP/2 DATA frame lands
-							const { value, done } = await reader.read();
-							if (done) {
-								logDiv.textContent += "\n[Stream ended by server]";
-								break;
-							}
+					// 2. Fires automatically when a complete "data: ...\n\n" message package lands
+					eventSource.onmessage = (event) => {
+						// event.data strips out the protocol "data: " prefix automatically
+						const textFrame = event.data;
+						
+						console.log("Intercepted SSE:", textFrame);
+						
+						logDiv.textContent += textFrame + "\n";
+						logDiv.scrollTop = logDiv.scrollHeight;
+					};
 
-							const chunkText = decoder.decode(value);
-							
-							// Print to standard browser devtools console
-							console.log("Intercepted Chunk:", chunkText.trim());
-							
-							// Append to the UI display container
-							logDiv.textContent += chunkText;
-							logDiv.scrollTop = logDiv.scrollHeight; // Auto-scroll to bottom
-						}
-					} catch (error) {
-						logDiv.textContent += "\n[Network Error]: " + error.message;
-						console.error("Stream reader broken:", error);
-					}
+					eventSource.onerror = (error) => {
+						console.error("SSE Connection dropped or errored:", error);
+						// EventSource will automatically try to reconnect by default unless closed
+					};
 				}
 
-				// Fire stream ingestion immediately on page load
-				listenToHttp2Stream();
+				// Launch instantly
+				listenToSseStream();
 			</script>
 		</body>
 		</html>
