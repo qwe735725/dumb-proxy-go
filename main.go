@@ -8,7 +8,13 @@ import (
 	"net/http"
 	"time"
 	"io"
+	"github.com/gorilla/websocket"
 )
+
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
+}
 
 func ok(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -49,42 +55,47 @@ func main() {
 		// ip.dst : tcp.dstPort
 	})
 
-	http.HandleFunc("/stream", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
-		w.Header().Set("X-Accel-Buffering", "no")
-
-		flusher, ok := w.(http.Flusher)
-		if !ok {
-			http.Error(w, "Streaming or HTTP/2 not supported by network connection", http.StatusInternalServerError)
+	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		// 2. Automatically handle the handshake protocol upgrade
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			log.Printf("Upgrade failed: %v", err)
 			return
 		}
+		defer conn.Close()
+		log.Println("WebSocket link established via Gorilla!")
 
-		ctx := r.Context()
-		log.Println("New client connected to /stream")
-
-		count := 0
-		for {
-			select {
-			case <-ctx.Done():
-				// This fires instantly if the user closes the window or navigates away
-				log.Printf("Client disconnected from stream. Total chunks sent: %d\n", count)
-				return
-			default:
+		// 3. Server-to-Client Stream Loop (Outbound)
+		go func() {
+			count := 0
+			for {
 				count++
-				// Format and write the data payload
-				payload := fmt.Sprintf("data: SSE Event Packet #%d | Time: %s\n\n", count, time.Now().Format("15:04:05"))
-
-				_, err := w.Write([]byte(payload))
+				payload := fmt.Sprintf("Gorilla Server Tick #%d | Time: %s", count, time.Now().Format("15:04:05"))
+				
+				// Simple native helper to send string messages safely
+				err := conn.WriteMessage(websocket.TextMessage, []byte(payload))
 				if err != nil {
-					log.Printf("Write error: %v\n", err)
-					return
+					return // Triggers if client disconnects
 				}
+				time.Sleep(2 * time.Second)
+			}
+		}()
 
-				flusher.Flush()
+		// 4. Client-to-Server Stream Loop (Inbound)
+		for {
+			// Automatically handles unmasking and structural frame management
+			messageType, message, err := conn.ReadMessage()
+			if err != nil {
+				log.Println("Client dropped connection.")
+				break
+			}
 
-				time.Sleep(1 * time.Second)
+			log.Printf("Received from Client: %s\n", string(message))
+
+			// Echo receipt confirmation straight back over the socket
+			ack := fmt.Sprintf("Server Acknowledged: '%s'", string(message))
+			if err := conn.WriteMessage(messageType, []byte(ack)); err != nil {
+				break
 			}
 		}
 	})
@@ -97,48 +108,63 @@ func main() {
 		<html lang="en">
 		<head>
 			<meta charset="UTF-8">
-			<title>HTTP/2 Stream Test</title>
+			<title>WebSocket Stream Test</title>
 			<style>
 				body { font-family: sans-serif; margin: 40px; background: #f4f4f9; color: #333; }
-				#log { background: #1e1e1e; color: #76c176; padding: 20px; border-radius: 6px; font-family: monospace; white-space: pre-wrap; height: 400px; overflow-y: auto; }
+				#log { background: #1e1e1e; color: #76c176; padding: 20px; border-radius: 6px; font-family: monospace; white-space: pre-wrap; height: 350px; overflow-y: auto; margin-bottom: 20px;}
 				h1 { color: #2c3e50; }
+				button { padding: 10px 20px; background: #3498db; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
+				button:hover { background: #2980b9; }
 			</style>
 		</head>
 		<body>
-			<h1>HTTP/2 Infinite Stream Inspector</h1>
-			<p>Open your browser DevTools Console (F12) or watch the terminal block below:</p>
-			<div id="log">Connecting to stream...&#10;</div>
+			<h1>Bi-Directional WebSocket Stream Inspector</h1>
+			<p>Watch incoming server ticks below, or click the button to stream client chunks back up:</p>
+			
+			<div id="log">Initializing WebSocket upgrade request...&#10;</div>
+			<button id="sendBtn" disabled>Stream Chunk to Server</button>
 
 			<script>
-				function listenToSseStream() {
-					const logDiv = document.getElementById('log');
-					
-					// 1. Native EventSource is designed explicitly to consume text/event-stream
-					const eventSource = new EventSource('/stream');
+				let ws;
+				let clientCount = 0;
 
-					eventSource.onopen = () => {
-						logDiv.textContent += "SSE Connection established! Streaming data... \n\n";
+				function initWebSocket() {
+					const logDiv = document.getElementById('log');
+					const sendBtn = document.getElementById('sendBtn');
+
+					// 1. Open connection using the ws:// protocol (bypasses load balancer HTTP logic)
+					ws = new WebSocket('ws://' + window.location.host + '/ws');
+
+					ws.onopen = () => {
+						logDiv.textContent += "WebSocket connection opened! Buffering disabled.\n\n";
+						sendBtn.disabled = false; // Allow client communication
 					};
 
-					// 2. Fires automatically when a complete "data: ...\n\n" message package lands
-					eventSource.onmessage = (event) => {
-						// event.data strips out the protocol "data: " prefix automatically
-						const textFrame = event.data;
-						
-						console.log("Intercepted SSE:", textFrame);
-						
-						logDiv.textContent += textFrame + "\n";
+					// 2. Event listener for server data streams
+					ws.onmessage = (event) => {
+						logDiv.textContent += "[Inbound] " + event.data + "\n";
 						logDiv.scrollTop = logDiv.scrollHeight;
 					};
 
-					eventSource.onerror = (error) => {
-						console.error("SSE Connection dropped or errored:", error);
-						// EventSource will automatically try to reconnect by default unless closed
+					ws.onclose = () => {
+						logDiv.textContent += "\n[WebSocket link severed]";
+						sendBtn.disabled = true;
 					};
 				}
 
-				// Launch instantly
-				listenToSseStream();
+				// 3. User interaction pushes a real-time event block up to the server stream
+				document.getElementById('sendBtn').onclick = () => {
+					clientCount++;
+					const payload = "Client Frame Element #" + clientCount;
+					
+					ws.send(payload); // Dispatched instantly through the open pipe
+					
+					const logDiv = document.getElementById('log');
+					logDiv.textContent += "[Outbound] Sent: " + payload + "\n";
+					logDiv.scrollTop = logDiv.scrollHeight;
+				};
+
+				initWebSocket();
 			</script>
 		</body>
 		</html>
