@@ -1,4 +1,4 @@
-package main
+package wswrapper
 
 import (
 	"github.com/gorilla/websocket"

@@ -2,13 +2,15 @@ package main
 
 import (
 	"bufio"
-	"github.com/gorilla/websocket"
-	"github.com/hashicorp/yamux"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"strings"
+
+	"dumb-proxy-go/pkg/wswrapper"
+	"github.com/gorilla/websocket"
+	"github.com/hashicorp/yamux"
 )
 
 var upgrader = websocket.Upgrader{
@@ -36,7 +38,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	defer wsConn.Close()
 
 	// 2. EXTRACT RAW NETWORK CONNECTION VIA UNDERLYING NATIVE SOCKET 🛠️
-	netConn := NewGorillaConn(wsConn)
+	netConn := wswrapper.NewGorillaConn(wsConn)
 
 	// 3. SLAP YAMUX SERVER ON TOP TO UNWRAP STREAMS 🌪️🌪️
 	session, err := yamux.Server(netConn, nil)

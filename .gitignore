@@ -1,0 +1,8 @@
+bin/
+
+# --- IDE and Editor Junk ---
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
