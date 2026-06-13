@@ -2,46 +2,84 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
 	"net"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"dumb-proxy-go/pkg/wswrapper"
+
 	"github.com/armon/go-socks5"
 	"github.com/gorilla/websocket"
 	"github.com/hashicorp/yamux"
+	"github.com/pkg/errors"
 )
 
+var (
+	mx              sync.Mutex
+	session         atomic.Pointer[yamux.Session]
+	lastConnectedAt time.Time
+)
+
+func getSessionNonBlocking(wsURL string) (*yamux.Session, error) {
+	s := session.Load()
+	if s != nil && !s.IsClosed() {
+		return s, nil
+	}
+
+	if !mx.TryLock() {
+		return nil, errors.New("proxy is currently offline")
+	}
+	defer mx.Unlock()
+
+	s = session.Load()
+	if s != nil && !s.IsClosed() {
+		return s, nil
+	}
+
+	if time.Since(lastConnectedAt) < 1*time.Second {
+		return nil, errors.New("too many reconnects")
+	}
+
+	log.Println("[💥] WEBSOCKET SMASH!!! MASTER TUNNEL EXPLODE!!! RECONNECT WORKER ASSIGNED (🦍)!!!")
+
+	wsConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	sess, err := yamux.Client(wswrapper.NewGorillaConn(wsConn), nil)
+	if err != nil {
+		wsConn.Close()
+		return nil, err
+	}
+
+	session.Store(sess)
+	lastConnectedAt = time.Now()
+
+	log.Println("[🏆] RECONNECT WORKER (🦍) FIX TOTAL DESTRUCTION!!! MASTER TUNNEL RESTORED!!! GIVE BANANA!!! 🍌🍌🍌")
+	return sess, nil
+}
+
 func main() {
-	log.Println("MONKEY STARTING CLIENT... 🦍")
+	log.Println("[🦍] MONKEY STARTING CLIENT...")
 
-	wsUrl := "wss://dumb-proxy-go.onrender.com/ws"
+	wsURL := flag.String("ws", "ws://localhost:8080/ws", "Remote proxy server WebSocket URL")
+	flag.Parse()
 
-	// 1. DIAL PORT 8080 FAST ⚡⚡
-	wsConn, _, err := websocket.DefaultDialer.Dial(wsUrl, nil)
-	if err != nil {
-		log.Fatalf("DIAL SMASHED!!! WEBSOCKET DEAD: %v", err)
-	}
-	defer wsConn.Close()
-	log.Println("WEBSOCKET CONNECTED TO SERVER!!! 🔥🔥🔥")
-
-	// 2. FORCE WEBSOCKET INTO NET.CONN 🛠️
-	netConn := wswrapper.NewGorillaConn(wsConn)
-
-	// 3. YAMUX MULTIPLEXER ON TOP 🌪️🌪️
-	session, err := yamux.Client(netConn, nil)
-	if err != nil {
-		log.Fatalf("YAMUX CRASHED NO STREAM FOR YOU: %v", err)
-	}
-	defer session.Close()
-	log.Println("YAMUX IS GO!!! MULTIPLEX MULTIPLEX MULTIPLEX!!! 🦍⚡")
-
-	// 4. SOCKS5 HANDSHAKE ENGINE 🍌
 	config := &socks5.Config{
 		Dial: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			log.Printf("ME TOLD GO TO: %s 🍌", addr)
+			log.Printf("[🍌] ME TOLD GO TO: %s", addr)
+
+			s, err := getSessionNonBlocking(*wsURL)
+			if err != nil {
+				return nil, err
+			}
 
 			// OPEN VIRTUAL STREAM
-			stream, err := session.Open()
+			stream, err := s.Open()
 			if err != nil {
 				return nil, err
 			}
@@ -59,12 +97,11 @@ func main() {
 
 	socksServer, err := socks5.New(config)
 	if err != nil {
-		log.Fatalf("SOCKS BUILDER BROKE: %v", err)
+		log.Fatalf("[💥] SOCKS BUILDER BROKE: %v", err)
 	}
 
-	// 5. BIND TO 1080!!! 🦍🦖
-	log.Println("SOCKS5 CLIENT RUNNING ON :1080!!! SEND DATA NOW!!! 🔥🔥🔥")
+	log.Println("[🦍] SOCKS5 CLIENT RUNNING ON :1080!!! SEND DATA NOW!!! 🔥🔥🔥")
 	if err := socksServer.ListenAndServe("tcp", ":1080"); err != nil {
-		log.Fatalf("PORT 1080 EXPLODED: %v", err)
+		log.Fatalf("[💥] PORT 1080 EXPLODED: %v", err)
 	}
 }
