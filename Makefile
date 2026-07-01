@@ -1,14 +1,14 @@
-.PHONY: all deamon dash server clean
+.PHONY: all client client-dash server clean
 
-all: deamon dash server
+all: client client-dash server
 
-daemon:
-	@echo "🦍 Compiling background client daemon binary..."
+client:
+	@echo "🦍 Compiling client daemon binary..."
 	@mkdir -p bin
 	go build -o bin/dumb-proxy-client-daemon ./cmd/client-daemon
 
-dash:
-	@echo "📟 Compiling client terminal dashboard tool..."
+client-dash:
+	@echo "🦍 Compiling client dashboard tool..."
 	@mkdir -p bin
 	go build -o bin/dumb-proxy-client-dash ./cmd/client-dash
 
@@ -18,4 +18,4 @@ server:
 	go build -o bin/dumb-proxy-server ./cmd/server
 
 clean:
-	rm -rf bin
+	rm -r bin

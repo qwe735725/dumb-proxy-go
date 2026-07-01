@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"dumb-proxy-go/internal/version"
 	"dumb-proxy-go/pkg/wswrapper"
 	"github.com/gorilla/websocket"
 	"github.com/hashicorp/yamux"
@@ -24,7 +25,7 @@ func ok(w http.ResponseWriter) {
 	w.Write([]byte(`<!DOCTYPE html>
 			<html>
 			<head><title>dumb-proxy-go</title></head>
-			<body>type shi</body>
+			<body>type shi (` + version.Version + `)</body>
 			</html>`))
 }
 
