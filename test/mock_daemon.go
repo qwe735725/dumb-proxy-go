@@ -45,9 +45,9 @@ func main() {
 			log.Printf("[-] Listener error: %v. Retrying...", err)
 			continue
 		}
-		
+
 		log.Println("[🎉] Dashboard attached! Launching sub-thread to fire live data stream...")
-		
+
 		// Spawn a dedicated thread handler for this specific dashboard session
 		// This leaves the main loop completely free to instantly pick up the next socket dial!
 		handleDashboardSession(conn)
@@ -84,7 +84,7 @@ func handleDashboardSession(conn net.Conn) {
 		// Compile the delimited telemetry layout frame payload
 		routesList := strings.Join(active, ",")
 		payload := fmt.Sprintf("TELEMETRY|%.1f MB|%d KB/s|%.1f MB|%d KB/s|%s\n", rxVol, rxSpeed, txVol, txSpeed, routesList)
-		
+
 		_, err := conn.Write([]byte(payload))
 		if err != nil {
 			log.Println("[-] Dashboard detached or closed window. Session cleaned up cleanly.")
@@ -92,4 +92,3 @@ func handleDashboardSession(conn net.Conn) {
 		}
 	}
 }
-
