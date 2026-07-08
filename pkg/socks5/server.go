@@ -3,6 +3,7 @@ package socks5
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"io"
 	"log"
 	"net"
@@ -20,12 +21,14 @@ const (
 )
 
 type Server struct {
-	dial func(network, address string) (net.Conn, error)
+	dial         func(network, address string) (net.Conn, error)
+	listenPacket func(ctx context.Context, network, address string) (net.PacketConn, error)
 }
 
-func New(d func(network, address string) (net.Conn, error)) *Server {
+func New(d func(network, address string) (net.Conn, error), l func(ctx context.Context, network, address string) (net.PacketConn, error)) *Server {
 	return &Server{
-		dial: d,
+		dial:         d,
+		listenPacket: l,
 	}
 }
 
@@ -122,7 +125,7 @@ func (s *Server) handleConnect(conn net.Conn, r *bufio.Reader, dst string) {
 		ver:     Socks5Version,
 		rep:     RepSuccess,
 		atyp:    AtypIPv4,
-		bndAddr: local.IP,
+		bndAddr: local.IP.To4(),
 		bndPort: uint16(local.Port),
 	}
 	if _, err := conn.Write(m.Raw()); err != nil {
@@ -185,8 +188,11 @@ func (s *Server) handleBind(conn net.Conn) {
 }
 
 func (s *Server) handleUdpAssociate(conn net.Conn) {
+	remoteIp, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
+	ctx := context.WithValue(context.Background(), "clientAddress", remoteIp)
+
 	// 1. Spin up a dynamic UDP listener for data relay
-	udpListener, err := net.ListenPacket("udp", "0.0.0.0:0")
+	udpListener, err := s.listenPacket(ctx, "udp", "0.0.0.0:0")
 	if err != nil {
 		m := &ServerReplyMessage{
 			ver:     Socks5Version,
@@ -216,12 +222,11 @@ func (s *Server) handleUdpAssociate(conn net.Conn) {
 		return
 	}
 
-	remoteIp, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
-
 	// 2. Start the UDP parsing/forwarding loop
 	go func() {
 		buf := make([]byte, 65535)
 		var clientAddr *net.UDPAddr
+
 		for {
 			n, srcAddr, err := udpListener.ReadFrom(buf)
 			if err != nil {
@@ -239,8 +244,7 @@ func (s *Server) handleUdpAssociate(conn net.Conn) {
 					continue
 				}
 
-				// Parse SOCKS5 UDP Header
-				// RSV (2B), FRAG (1B), ATYP (1B)
+				// Parse SOCKS5 UDP Packet
 
 				h := &UdpPacket{}
 				if err := h.FromReader(bytes.NewReader(buf[:n])); err != nil {
@@ -252,13 +256,15 @@ func (s *Server) handleUdpAssociate(conn net.Conn) {
 					continue
 				}
 
+				targetAddr, err := net.ResolveUDPAddr("udp", targetAddrStr)
+				if err != nil {
+					continue
+				}
+
 				log.Printf("[:%d] FWD to %s", bindPort, targetAddrStr)
 
 				// Send raw payload to final destination
-				if remoteUDP, err := s.dial("udp", targetAddrStr); err == nil {
-					remoteUDP.Write(h.data)
-					remoteUDP.Close()
-				}
+				_, _ = udpListener.WriteTo(h.data, targetAddr)
 				continue
 			}
 
@@ -279,8 +285,8 @@ func (s *Server) handleUdpAssociate(conn net.Conn) {
 				h.dstAddr = net.ParseIP(srcIp).To16()
 			}
 
-			udpListener.WriteTo(h.Raw(), clientAddr)
 			log.Printf("[:%d] BACK to %s", bindPort, clientAddr.String())
+			udpListener.WriteTo(h.Raw(), clientAddr)
 		}
 	}()
 

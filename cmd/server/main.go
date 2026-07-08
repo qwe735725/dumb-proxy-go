@@ -2,6 +2,8 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -78,29 +80,88 @@ func handleVirtualStream(stream net.Conn) {
 
 	network, dst := line[:3], strings.TrimSpace(line[4:])
 
-	target, err := net.Dial(network, dst)
+	if network == "tcp" {
+		target, err := net.Dial("tcp", dst)
+		if err != nil {
+			log.Printf("DIAL TARGET FAIL %v", err)
+			return
+		}
+		defer target.Close()
+
+		targetReader := io.Reader(target)
+		targetWriter := io.Writer(target)
+
+		ch := make(chan error, 2)
+
+		// Flow both ways
+		go func() {
+			// target <- stream
+			_, err := io.Copy(targetWriter, streamReader)
+			ch <- err
+		}()
+
+		go func() {
+			// stream <- target
+			_, err := io.Copy(streamWriter, targetReader)
+			ch <- err
+		}()
+
+		<-ch
+		return
+	}
+
+	target, err := net.ListenPacket("udp", "0.0.0.0:0")
 	if err != nil {
 		log.Printf("DIAL TARGET FAIL %v", err)
 		return
 	}
 	defer target.Close()
 
-	targetReader := io.Reader(target)
-	targetWriter := io.Writer(target)
-
 	ch := make(chan error, 2)
 
 	// Flow both ways
 	go func() {
 		// target <- stream
-		_, err := io.Copy(targetWriter, streamReader)
-		ch <- err
+		buf := make([]byte, 2048)
+
+		for {
+			n, err := streamReader.Read(buf)
+			if err != nil {
+				ch <- err
+				return
+			}
+
+			line, _ := bufio.NewReader(bytes.NewReader(buf)).ReadString('\n')
+			addr, _ := net.ResolveUDPAddr(line[:3], strings.TrimSpace(line[4:]))
+
+			_, err = target.WriteTo(buf[len(line):n], addr)
+			if err != nil {
+				ch <- err
+				return
+			}
+		}
 	}()
 
 	go func() {
 		// stream <- target
-		_, err := io.Copy(streamWriter, targetReader)
-		ch <- err
+		buf := make([]byte, 2048)
+
+		for {
+			n, addr, err := target.ReadFrom(buf)
+			if err != nil {
+				ch <- err
+				return
+			}
+
+			b := []byte(fmt.Sprintf("udp %s\n", addr.String()))
+			b = append(b, buf[:n]...)
+
+			_, err = streamWriter.Write(b)
+			if err != nil {
+				ch <- err
+				return
+			}
+		}
 	}()
 
 	<-ch
