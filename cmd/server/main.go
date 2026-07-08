@@ -148,7 +148,7 @@ func handleVirtualStream(stream net.Conn) {
 			addr, _ := net.ResolveUDPAddr(line[:3], strings.TrimSpace(line[4:]))
 
 			b = b[len(line):]
-			log.Printf("WriteTo @ %s (n = %d)", line, len(b))
+			log.Printf("Write to udp (target): %s (n = %d)", line, len(b))
 
 			if len(b) == 0 {
 				log.Printf("empty wirite to target, dropping pakcte..")
@@ -181,6 +181,8 @@ func handleVirtualStream(stream net.Conn) {
 
 			b := []byte(fmt.Sprintf("udp %s\n", addr.String()))
 			b = append(b, buf[:n]...)
+
+			log.Printf("Read from udp (target): %s (n = %d)", addr.String(), n)
 
 			_, err = streamWriter.Write(b)
 			if err != nil {

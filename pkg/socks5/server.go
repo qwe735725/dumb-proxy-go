@@ -261,7 +261,7 @@ func (s *Server) handleUdpAssociate(conn net.Conn) {
 					continue
 				}
 
-				log.Printf("[:%d] FWD to %s", bindPort, targetAddrStr)
+				log.Printf("[:%d] FWD to %s", bindPort, targetAddr.String())
 
 				// Send raw payload to final destination
 				_, _ = udpListener.WriteTo(h.data, targetAddr)
@@ -285,7 +285,7 @@ func (s *Server) handleUdpAssociate(conn net.Conn) {
 				h.dstAddr = net.ParseIP(srcIp).To16()
 			}
 
-			log.Printf("[:%d] BACK to %s", bindPort, clientAddr.String())
+			log.Printf("[:%d] BACK to %s from %s", bindPort, clientAddr.String(), srcAddr.String())
 			udpListener.WriteTo(h.Raw(), clientAddr)
 		}
 	}()
