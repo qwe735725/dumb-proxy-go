@@ -70,21 +70,18 @@ func handleVirtualStream(stream net.Conn) {
 	streamReader := io.Reader(stream)
 	streamWriter := io.Writer(stream)
 
-	dialTarget := func(r io.Reader) (net.Conn, error) {
-		b := bufio.NewReader(r)
-
-		dst, err := b.ReadString('\n')
-		if err != nil {
-			return nil, err
-		}
-		dst = strings.TrimSpace(dst)
-
-		return net.Dial("tcp", dst)
+	line, err := bufio.NewReader(streamReader).ReadString('\n')
+	if err != nil {
+		log.Printf("READ FAIL %v", err)
+		return
 	}
 
-	target, err := dialTarget(streamReader)
+	network, dst := line[:3], strings.TrimSpace(line[4:])
+
+	target, err := net.Dial(network, dst)
 	if err != nil {
 		log.Printf("DIAL TARGET FAIL %v", err)
+		return
 	}
 	defer target.Close()
 

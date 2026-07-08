@@ -33,7 +33,7 @@ func main() {
 		}
 
 		// TELL SERVER WHERE TO GO
-		_, err = stream.Write([]byte(addr + "\n"))
+		_, err = stream.Write([]byte(network + " " + addr + "\n"))
 		if err != nil {
 			stream.Close()
 			return nil, err

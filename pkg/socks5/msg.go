@@ -155,4 +155,3 @@ func (m *UdpPacket) Raw() []byte {
 	b = append(b, portBuf...)
 	return append(b, m.data...)
 }
-

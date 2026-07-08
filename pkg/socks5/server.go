@@ -19,7 +19,7 @@ const (
 	AtypIPv6 = 0x04
 )
 
-type Server struct{
+type Server struct {
 	dial func(network, address string) (net.Conn, error)
 }
 
