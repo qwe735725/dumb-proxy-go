@@ -129,7 +129,7 @@ func (s *Server) handleConnect(conn net.Conn, r *bufio.Reader, dst string) {
 		return
 	}
 
-	errChan := make(chan error, 1)
+	errChan := make(chan error, 2)
 
 	go func() { _, err := io.Copy(targetConn, r); errChan <- err }()
 	go func() { _, err := io.Copy(conn, targetConn); errChan <- err }()
@@ -176,7 +176,7 @@ func (s *Server) handleBind(conn net.Conn) {
 		return
 	}
 
-	errChan := make(chan error, 1)
+	errChan := make(chan error, 2)
 
 	go func() { _, err := io.Copy(targetConn, conn); errChan <- err }()
 	go func() { _, err := io.Copy(conn, targetConn); errChan <- err }()

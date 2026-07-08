@@ -88,16 +88,22 @@ func handleVirtualStream(stream net.Conn) {
 	targetReader := io.Reader(target)
 	targetWriter := io.Writer(target)
 
+	ch := make(chan error, 2)
+
 	// Flow both ways
 	go func() {
 		// target <- stream
-		_, _ = io.Copy(targetWriter, streamReader)
+		_, err := io.Copy(targetWriter, streamReader)
+		ch <- err
 	}()
 
 	go func() {
 		// stream <- target
-		_, _ = io.Copy(streamWriter, targetReader)
+		_, err := io.Copy(streamWriter, targetReader)
+		ch <- err
 	}()
+
+	<-ch
 }
 
 func main() {
