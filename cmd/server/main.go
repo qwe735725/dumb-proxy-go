@@ -112,7 +112,7 @@ func handleVirtualStream(stream net.Conn) {
 
 	target, err := net.ListenPacket("udp", "0.0.0.0:0")
 	if err != nil {
-		log.Printf("DIAL TARGET FAIL %v", err)
+		log.Printf("LISTEN PACKET FAIL %v", err)
 		return
 	}
 	defer target.Close()
@@ -131,8 +131,23 @@ func handleVirtualStream(stream net.Conn) {
 				return
 			}
 
-			line, _ := bufio.NewReader(bytes.NewReader(buf)).ReadString('\n')
+			if n == 0 {
+				log.Printf("Error reading from target. empty frame")
+				continue
+			}
+
+			b := buf[:n]
+
+			idx := bytes.IndexByte(b, '\n')
+			if idx == -1 {
+				log.Printf("Error reading from stream. malformed frame")
+				continue
+			}
+
+			line := string(b[:idx])
 			addr, _ := net.ResolveUDPAddr(line[:3], strings.TrimSpace(line[4:]))
+
+			log.Printf("WriteTo @ %s", addr.String())
 
 			_, err = target.WriteTo(buf[len(line):n], addr)
 			if err != nil {
@@ -151,6 +166,11 @@ func handleVirtualStream(stream net.Conn) {
 			if err != nil {
 				ch <- err
 				return
+			}
+
+			if n == 0 {
+				log.Printf("Error reading from target. empty packet")
+				continue
 			}
 
 			b := []byte(fmt.Sprintf("udp %s\n", addr.String()))

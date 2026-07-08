@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"flag"
@@ -59,9 +58,23 @@ func NewGorillaUdpConn(remote net.Conn, clientAddr string, network, address stri
 
 		for !c.isClosed {
 			n, err := c.remote.Read(buf)
+			if n == 0 {
+				log.Printf("Error reading from remote. empty frame")
+				continue
+			}
 
-			line, _ := bufio.NewReader(bytes.NewReader(buf)).ReadString('\n')
+			b := buf[:n]
+			idx := bytes.IndexByte(b, '\n')
+			if idx == -1 {
+				log.Printf("Error reading from remote. malformed frame")
+				continue
+			}
+
+
+			line := string(b[:idx])
 			addr, _ := net.ResolveUDPAddr(line[:3], strings.TrimSpace(line[4:]))
+
+			log.Printf("remote read: %s", addr.String())
 
 			c.remotePending <- readResult{n: n - len(line), addr: addr, err: err, p: slices.Clone(buf[len(line):n])}
 		}
@@ -72,6 +85,11 @@ func NewGorillaUdpConn(remote net.Conn, clientAddr string, network, address stri
 
 		for !c.isClosed {
 			n, addr, err := c.local.ReadFrom(buf)
+			if n == 0 {
+				log.Printf("Error reading from local. empty packet")
+				continue
+			}
+
 			c.localPending <- readResult{n: n, addr: addr, err: err, p: slices.Clone(buf[:n])}
 		}
 	}()
