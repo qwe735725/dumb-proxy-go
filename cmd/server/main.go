@@ -147,9 +147,15 @@ func handleVirtualStream(stream net.Conn) {
 			line := string(b[:idx])
 			addr, _ := net.ResolveUDPAddr(line[:3], strings.TrimSpace(line[4:]))
 
-			log.Printf("WriteTo @ %s", addr.String())
+			b = b[len(line):]
+			log.Printf("WriteTo @ %s (n = %d)", line, len(b))
 
-			_, err = target.WriteTo(buf[len(line):n], addr)
+			if len(b) == 0 {
+				log.Printf("empty wirite to target, dropping pakcte..")
+				continue
+			}
+
+			_, err = target.WriteTo(b, addr)
 			if err != nil {
 				ch <- err
 				return
