@@ -26,7 +26,7 @@ func defaultRoute(w http.ResponseWriter, _ *http.Request) {
 	w.Write([]byte(`<!DOCTYPE html>
 			<html>
 			<head><title>dumb-proxy-go</title></head>
-			<body>type shi (` + serverapp.Version + `)</body>
+			<body>type shi (v` + serverapp.Version + `)</body>
 			</html>`))
 }
 
